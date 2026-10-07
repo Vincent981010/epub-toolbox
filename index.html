@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Epub Toolbox</title>
+<script src="jszip.min.js"></script>
+<script src="opencc-js.min.js"></script>
+<style>
+  :root {
+    --primary-color: #4a90e2;
+    --danger-color: #e06c75;
+    --bg-color: #f5f7fa;
+    --card-bg: #ffffff;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: #333;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+  }
+  .container {
+    max-width: 700px;
+    width: 100%;
+    background: var(--card-bg);
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  }
+  h2 { text-align: center; color: #333; margin-bottom: 6px; }
+  .subtitle { text-align: center; color: #888; font-size: 13px; margin-bottom: 25px; }
+  .form-group { margin-bottom: 20px; }
+  label { display: block; font-weight: bold; margin-bottom: 8px; }
+
+  /* 拖曳區（沿用自 epub-simplified-to-traditional-chinese） */
+  #dropZone {
+    border: 3px dashed #b4b4d8;
+    border-radius: 8px;
+    padding: 30px 20px;
+    text-align: center;
+    background: #f9f9ff;
+    color: #555;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 15px;
+  }
+  #dropZone.dragover { background: #e1e1ff; border-color: #6666cc; color: #222; }
+  #dropZone .hint { font-size: 12px; color: #888; font-weight: normal; margin-top: 8px; }
+
+  .btn-group { display: flex; gap: 15px; margin-bottom: 10px; }
+  .btn-wrapper { flex: 1; text-align: center; }
+  .btn-wrapper label.file-label {
+    display: block; background: #007bff; color: white; padding: 12px;
+    border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: background 0.2s;
+  }
+  .btn-wrapper label.file-label:hover { background: #0056b3; }
+  .btn-wrapper.folder label.file-label { background: #28a745; }
+  .btn-wrapper.folder label.file-label:hover { background: #1e7e34; }
+  .btn-wrapper input[type="file"] { display: none; }
+  .btn-wrapper .hint { font-size: 11px; color: #666; margin-top: 5px; display: block; }
+
+  select {
+    width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px;
+    box-sizing: border-box; font-size: 14px; background: white;
+  }
+
+  .checkbox-row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .checkbox-label {
+    display: flex; align-items: center; gap: 8px; font-weight: normal;
+    background: #f0f4fa; padding: 10px 16px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #dbe4ee; flex: 1; min-width: 180px;
+  }
+  .checkbox-label input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+
+  .rule-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+  .rule-row input {
+    flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
+  }
+  button {
+    padding: 10px 16px; border: none; border-radius: 4px; cursor: pointer;
+    font-weight: bold; transition: background 0.2s;
+  }
+  .btn-add {
+    background-color: #e1ecf4; color: #39739d; border: 1px solid #7aa7c7;
+    width: 100%; margin-top: 5px;
+  }
+  .btn-add:hover { background-color: #d0e3f0; }
+  .btn-delete { background-color: var(--danger-color); color: white; padding: 8px 12px; }
+  .btn-delete:hover { background-color: #d15963; }
+  .btn-submit {
+    background-color: var(--primary-color); color: white; width: 100%;
+    font-size: 16px; padding: 12px; border-radius: 6px;
+  }
+  .btn-submit:hover { background-color: #357abd; }
+  .btn-submit:disabled { background-color: #ccc; cursor: not-allowed; }
+
+  #log {
+    background: #333; color: #0f0; padding: 12px; height: 260px; overflow-y: auto;
+    font-family: monospace; font-size: 13px; line-height: 1.5; border-radius: 6px; margin-top: 20px;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h2>Epub Toolbox</h2>
+  <div class="subtitle">\n</div>
+
+  <div class="form-group">
+    <label>0. 選擇要執行的步驟（可複選；若兩者都勾選，會先執行簡繁字詞轉換，再用轉換後的文字進行章節拆分）</label>
+    <div class="checkbox-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="enableConvert" checked onchange="updateUIStates()">
+        簡繁字詞轉換
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="enableFixAlt" onchange="updateUIStates()">
+        修復 EPUB 圖片缺少 alt 屬性的錯誤
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="enableSplit" onchange="updateUIStates()">
+        小說章節自動拆分
+      </label>
+    </div>
+    <div id="fixAltNote" class="hint" style="margin-top: 8px; display: none;">
+      ⚠️ 此修復只對輸出為 EPUB 的情況生效（即沒有同時勾選「章節拆分」時）。若同時勾選
+      「章節拆分」，該檔案最終會輸出成純文字章節檔、不含 HTML 標籤，此修復不會有作用。
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>1. 拖曳或選擇檔案／資料夾</label>
+    <div id="dropZone">
+      <span id="dropZoneMainText">拖曳【多個 .epub / .txt 檔案】或【整個書庫資料夾】到這裡</span>
+      <div class="hint">(支援資料夾內含多層子資料夾的深度掃描；選擇後不會馬上執行，可先設定好選項再按下方按鈕開始)</div>
+    </div>
+    <div class="btn-group">
+      <div class="btn-wrapper">
+        <label class="file-label" for="fileInput">📄 選擇多個檔案</label>
+        <input type="file" id="fileInput" accept=".epub,.txt" multiple>
+        <span class="hint">適合分散的獨立檔案，逐一轉換下載</span>
+      </div>
+      <div class="btn-wrapper folder">
+        <label class="file-label" for="folderInput">📂 選擇整個資料夾</label>
+        <input type="file" id="folderInput" webkitdirectory directory multiple>
+        <span class="hint">維持目錄結構，打包成一個 zip</span>
+      </div>
+    </div>
+    <div id="selectedInfo" style="font-size: 13px; color: #555; margin-top: 8px;">尚未選擇任何檔案</div>
+  </div>
+
+  <div id="convertOptions">
+    <div class="form-group">
+      <label>2. 設定 OpenCC 繁簡轉換模式</label>
+      <select id="openccMode">
+        <option value="s2twp" selected>簡體 ➔ 臺灣正體（含常用詞彙修正，如：软件 ➔ 軟體）</option>
+        <option value="s2tw">簡體 ➔ 臺灣正體（僅字體轉換，不改動詞彙）</option>
+        <option value="s2t">簡體 ➔ 傳統繁體</option>
+        <option value="t2s">繁體 ➔ 簡體</option>
+        <option value="none">不進行 OpenCC 轉換（僅執行下方的字詞替換）</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>3. 設定自訂字詞替換規則（選填，可設定多組，於 OpenCC 轉換後套用）</label>
+      <div id="rulesContainer">
+        <div class="rule-row">
+          <input type="text" class="find-input" placeholder="要被換掉的字詞（例如：舊主角名）">
+          <span>➔</span>
+          <input type="text" class="replace-input" placeholder="換成新的字詞（例如：新主角名）">
+          <button type="button" class="btn-delete" onclick="deleteRow(this)">刪除</button>
+        </div>
+      </div>
+      <button type="button" class="btn-add" onclick="addRuleRow()">+ 增加一組規則</button>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>4. 確認設定並開始執行</label>
+    <button type="button" id="startBtn" class="btn-submit" onclick="startConversion()" disabled>請先選擇檔案或資料夾</button>
+  </div>
+
+  <div id="log">系統準備就緒... (請先選擇功能與檔案／資料夾，設定好選項後再按下方按鈕開始執行)</div>
+</div>
+
+<script>
+const logEl = document.getElementById('log');
+function log(m) { logEl.innerText += '\n' + m; logEl.scrollTop = logEl.scrollHeight; }
+
+/* ------------------------------------------------------------------
+ * 以下 EPUB 核心轉換邏輯（urlPattern / xmlEncPattern / metaEncPattern /
+ * processSingleEpub）完全沿用 epub-simplified-to-traditional-chinese，
+ * 未更動其處理流程；差異只在於 converter 現在改為可帶「自訂字詞替換規則」
+ * 的組合函式，並可依使用者選擇切換 OpenCC 轉換方向。
+ * ------------------------------------------------------------------ */
+const urlPattern = /([a-zA-Z0-9_:-]*(?:href|src))\s*=\s*(['"])(.*?)\2/gi;
+const xmlEncPattern = /(<\?xml[^>]+encoding\s*=\s*['"])[a-zA-Z0-9\-]+(['"])/gi;
+const metaEncPattern = /(<meta[^>]+charset\s*=\s*['"]?)[a-zA-Z0-9\-]+(['"]?)/gi;
+
+// 修復常見的 EPUB 驗證錯誤：<img> 標籤的 alt 屬性沒有值
+// （對應錯誤訊息："Specification mandates value for attribute alt"）
+// 這個錯誤有兩種成因，都要處理：
+//   1. 完全沒有 alt 屬性 → 補上 alt=""
+//   2. 有「裸 alt」屬性，即 alt 沒有帶值（例如 HTML5 允許的 <img ... alt />，
+//      在 XHTML 裡不合法）→ 把裸 alt 原地改成 alt=""，而不是另外再補一個
+//      （否則會變成 alt alt="" 這種重複屬性，比原本的錯誤更嚴重）
+// 已經有合法 alt="..."（不論內容是否為空字串）的標籤則完全不動。
+function fixMissingImgAlt(htmlContent) {
+  return htmlContent.replace(/<img\b([^>]*)>/gi, (match, attrsRaw) => {
+    if (/\balt\s*=\s*["']/i.test(attrsRaw)) return match; // 已有合法 alt，不動
+
+    let attrs = attrsRaw;
+    const selfClosing = /\/\s*$/.test(attrs);
+    if (selfClosing) attrs = attrs.replace(/\/\s*$/, '');
+
+    if (/\balt\b(?!\s*=)/i.test(attrs)) {
+      // 情況 2：裸 alt，原地補上值，不重複新增屬性
+      attrs = attrs.replace(/\balt\b(?!\s*=)/i, 'alt=""').trim();
+      return `<img${attrs ? ' ' + attrs : ''}${selfClosing ? ' /' : ''}>`;
+    }
+
+    // 情況 1：完全沒有 alt 屬性
+    attrs = attrs.trim();
+    return `<img${attrs ? ' ' + attrs : ''} alt=""${selfClosing ? ' /' : ''}>`;
+  });
+}
+
+// 核心 EPUB 轉換邏輯（沿用自 epub-simplified-to-traditional-chinese processSingleEpub，
+// 差異：檔名／路徑一律維持原樣，只轉換檔案「內容」；並可選擇性修復缺少 alt 屬性的 <img> 標籤）
+async function processSingleEpub(file, contentConverter, fixImgAlt) {
+  const zip = await new JSZip().loadAsync(file);
+  const newZip = new JSZip();
+
+  if (zip.files['mimetype']) {
+    const mimeContent = await zip.file('mimetype').async('string');
+    newZip.file('mimetype', mimeContent);
+  }
+
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir || path === 'mimetype') continue;
+
+    const isTextFile = path.match(/\.(html|xhtml|htm|ncx|opf|xml|txt|css)$/i);
+    const isHtmlFile = path.match(/\.(html|xhtml|htm)$/i);
+
+    if (isTextFile) {
+      let content = await entry.async("string");
+      content = content.replace(urlPattern, (match, attr, quote, urlVal) => {
+        try {
+          return `${attr}=${quote}${decodeURIComponent(urlVal)}${quote}`;
+        } catch (err) {
+          return match;
+        }
+      });
+      content = contentConverter(content);
+      if (fixImgAlt && isHtmlFile) content = fixMissingImgAlt(content);
+      content = content.replace(xmlEncPattern, "$1utf-8$2");
+      content = content.replace(metaEncPattern, "$1utf-8$2");
+      newZip.file(path, content);
+    } else {
+      newZip.file(path, await entry.async("blob"));
+    }
+  }
+
+  return await newZip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
+}
+
+// TXT 轉換（沿用自 epub-tools 的行為，但複用同一組 converter）
+async function processSingleTxt(file, contentConverter) {
+  const text = await readFileAsText(file);
+  return new Blob([contentConverter(text)], { type: 'text/plain;charset=utf-8' });
+}
+
+const readFileAsText = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = e => res(e.target.result);
+  r.onerror = () => rej(new Error(`讀取文字失敗: ${file.name}`));
+  r.readAsText(file);
+});
+
+/* ------------------------------------------------------------------
+ * 以下「小說章節自動拆分」邏輯沿用自 split_novel_by_chapter.command，
+ * 移植為瀏覽器端 JavaScript：
+ *   - 章節判斷規則（chapterPattern）、分隔線過濾規則（dividerPattern）、
+ *     章節內容清理規則（壓縮空行、裁切首尾空白）與原腳本完全相同
+ *   - EPUB 文字擷取：解析 container.xml / OPF manifest 與 spine 順序，
+ *     依正確閱讀順序讀出每個章節檔案的文字內容，並剝除 HTML 標籤
+ *   - 差異：原腳本在解析 OPF manifest 時，id 與 href 是用兩個各自獨立
+ *     的正則擷取，若屬性順序不同會導致解析失敗；瀏覽器版改成針對單一
+ *     <item> 標籤同時擷取 id 與 href，不受屬性順序影響，避免原本的解析錯誤
+ * ------------------------------------------------------------------ */
+const chapterPattern = /^\s*(第\s*[0-9一二三四五六七八九十百千萬零]+\s*[章回卷節]|Chapter\s*[0-9]+|序章|序幕|前言|終章|尾聲|結語|後記|番外篇?|番外章?|(?:電子書|電子版|店鋪|店舖|限定|封入)?特典篇?)/i;
+const dividerPattern = /^\s*[*\-\s_·~]{3,}\s*$/;
+
+function normalizeZipPath(p) {
+  const stack = [];
+  for (const part of p.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') stack.pop();
+    else stack.push(part);
+  }
+  return stack.join('/');
+}
+
+// 嘗試多種編碼解碼位元組內容（對應原腳本 utf-8 / gbk / big5 / utf-16 的嘗試順序）
+async function decodeWithFallback(arrayBuffer) {
+  const encodings = ['utf-8', 'gbk', 'big5', 'utf-16le'];
+  for (const enc of encodings) {
+    try {
+      return new TextDecoder(enc, { fatal: true }).decode(arrayBuffer);
+    } catch (err) { /* 換下一種編碼再試 */ }
+  }
+  return new TextDecoder('utf-8').decode(arrayBuffer); // 最後保底，不保證完全正確
+}
+
+// 將 EPUB 內文的 HTML 轉為純文字，行為對應原腳本的 EPUBTextStripper：
+// style/script/head 內容整段忽略；p/br/div/h1-6/tr 標籤前後插入換行
+function htmlToPlainText(htmlStr) {
+  const doc = new DOMParser().parseFromString(htmlStr, 'text/html');
+  const blockStart = new Set(['P', 'BR', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TR']);
+  const blockEnd = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+  let text = '';
+  (function walk(node) {
+    if (node.nodeType === Node.TEXT_NODE) { text += node.nodeValue; return; }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = node.tagName;
+    if (tag === 'STYLE' || tag === 'SCRIPT' || tag === 'HEAD') return; // 整段忽略內容
+    if (blockStart.has(tag)) text += '\n';
+    for (const child of node.childNodes) walk(child);
+    if (blockEnd.has(tag)) text += '\n';
+  })(doc.body || doc.documentElement);
+  return text;
+}
+
+// 讀取 EPUB 並依 spine 閱讀順序回傳文字行陣列（每行保留結尾換行符）
+async function extractTextFromEpub(file) {
+  try {
+    const zip = await new JSZip().loadAsync(file);
+
+    let opfPath = null;
+    if (zip.files['META-INF/container.xml']) {
+      const containerText = await zip.file('META-INF/container.xml').async('string');
+      const m = containerText.match(/full-path=["']([^"']+)["']/);
+      if (m) opfPath = m[1];
+    }
+    if (!opfPath) {
+      const candidates = Object.keys(zip.files).filter(f => f.toLowerCase().endsWith('.opf'));
+      if (candidates.length) opfPath = candidates[0];
+    }
+    if (!opfPath) return null;
+
+    const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/')) : '';
+    const opfText = await zip.file(opfPath).async('string');
+
+    const items = {};
+    const itemTagPattern = /<item\b([^>]*?)\/?>/gi;
+    let itemMatch;
+    while ((itemMatch = itemTagPattern.exec(opfText)) !== null) {
+      const attrs = itemMatch[1];
+      const idM = attrs.match(/\bid=["']([^"']+)["']/i);
+      const hrefM = attrs.match(/\bhref=["']([^"']+)["']/i);
+      if (idM && hrefM) items[idM[1]] = hrefM[1];
+    }
+
+    const spineIds = [];
+    const itemrefPattern = /<itemref\s+[^>]*idref=["']([^"']+)["']/gi;
+    let refMatch;
+    while ((refMatch = itemrefPattern.exec(opfText)) !== null) spineIds.push(refMatch[1]);
+
+    const fullTextParts = [];
+    for (const idref of spineIds) {
+      const href = items[idref];
+      if (!href) continue;
+      const decodedHref = decodeURIComponent(href);
+      let targetPath = normalizeZipPath(opfDir ? `${opfDir}/${decodedHref}` : decodedHref);
+      targetPath = targetPath.replace(/^\/+/, '');
+
+      const entry = zip.file(targetPath);
+      if (!entry) continue;
+
+      const buf = await entry.async('arraybuffer');
+      const htmlText = await decodeWithFallback(buf);
+      if (htmlText) fullTextParts.push(htmlToPlainText(htmlText));
+    }
+
+    if (fullTextParts.length === 0) return null;
+    let allText = fullTextParts.join('\n').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return allText.split('\n').map(l => l + '\n');
+  } catch (err) {
+    log(`⚠️ 解析 EPUB 時發生非預期錯誤: ${err.message}`);
+    return null;
+  }
+}
+
+async function extractTextFromTxt(file) {
+  const buf = await file.arrayBuffer();
+  const text = await decodeWithFallback(buf);
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return normalized.split('\n').map(l => l + '\n');
+}
+
+// 對應原腳本 save_chapter：過濾分隔線、壓縮空行、裁切首尾空白
+function buildChapterFile(count, title, contentLines, isPreface) {
+  const cleaned = contentLines.filter(line => !dividerPattern.test(line));
+  let fullText = cleaned.join('');
+  fullText = fullText.replace(/\n{3,}/g, '\n\n').trim();
+  if (!fullText) return null;
+
+  let fileName;
+  if (isPreface) {
+    fileName = '0000_前言與簡介.txt';
+  } else {
+    const safeTitle = title.replace(/[\/*?:"<>|]/g, '_').slice(0, 40);
+    fileName = `${String(count).padStart(4, '0')}_${safeTitle}.txt`;
+  }
+  return { fileName, content: fullText + '\n' };
+}
+
+// 對應原腳本主迴圈：依 chapterPattern 判斷章節起點，逐行分組
+function splitIntoChapters(lines) {
+  const results = [];
+  let currentTitle = '前言與簡介';
+  let currentContent = [];
+  let chapterCount = 0;
+  let isPreface = true;
+
+  for (const line of lines) {
+    if (chapterPattern.test(line)) {
+      if (currentContent.length) {
+        const chap = buildChapterFile(chapterCount, currentTitle, currentContent, isPreface);
+        if (chap) results.push(chap);
+      }
+      chapterCount += 1;
+      currentTitle = line.trim();
+      currentContent = [line];
+      isPreface = false;
+    } else {
+      currentContent.push(line);
+    }
+  }
+  if (currentContent.length) {
+    const chap = buildChapterFile(chapterCount, currentTitle, currentContent, isPreface);
+    if (chap) results.push(chap);
+  }
+  return results;
+}
+
+/* ------------------------------------------------------------------
+ * OpenCC 模式 + 自訂字詞替換規則（沿用自 epub-tools）
+ * ------------------------------------------------------------------ */
+function addRuleRow() {
+  const container = document.getElementById('rulesContainer');
+  const row = document.createElement('div');
+  row.className = 'rule-row';
+  row.innerHTML = `
+    <input type="text" class="find-input" placeholder="要被換掉的字詞">
+    <span>➔</span>
+    <input type="text" class="replace-input" placeholder="換成新的字詞">
+    <button type="button" class="btn-delete" onclick="deleteRow(this)">刪除</button>
+  `;
+  container.appendChild(row);
+}
+
+function deleteRow(button) {
+  const row = button.parentElement;
+  const container = document.getElementById('rulesContainer');
+  if (container.children.length > 1) {
+    row.remove();
+  } else {
+    row.querySelector('.find-input').value = '';
+    row.querySelector('.replace-input').value = '';
+  }
+}
+
+function getRules() {
+  const rows = document.querySelectorAll('.rule-row');
+  const rules = [];
+  rows.forEach(row => {
+    const findVal = row.querySelector('.find-input').value;
+    const replaceVal = row.querySelector('.replace-input').value;
+    if (findVal) rules.push({ find: findVal, replace: replaceVal });
+  });
+  return rules;
+}
+
+function getOpenCCFn(mode) {
+  if (typeof OpenCC === 'undefined') {
+    log("❌ 錯誤：OpenCC 尚未載入，請稍後再試或檢查網路連線。");
+    return null;
+  }
+  switch (mode) {
+    case 's2twp': return OpenCC.Converter({ from: 'cn', to: 'twp' });
+    case 's2tw': return OpenCC.Converter({ from: 'cn', to: 'tw' });
+    case 's2t': return OpenCC.Converter({ from: 'cn', to: 't' });
+    case 't2s': return OpenCC.Converter({ from: 't', to: 'cn' });
+    case 'none': default: return null;
+  }
+}
+
+// 內容轉換：OpenCC 轉換 + 自訂字詞替換規則
+function buildContentConverter(openccFn, rules) {
+  return (text) => {
+    let out = openccFn ? openccFn(text) : text;
+    for (const rule of rules) {
+      out = out.split(rule.find).join(rule.replace);
+    }
+    return out;
+  };
+}
+
+/* ------------------------------------------------------------------
+ * 統一執行流程：依「簡繁字詞轉換」「章節拆分」兩個步驟的勾選狀態，
+ * 組合出實際要對每個檔案做的處理。若兩者都勾選，會先對文字內容套用
+ * 簡繁轉換／字詞替換，再用轉換後的文字進行章節拆分。
+ * ------------------------------------------------------------------ */
+async function runPipeline(itemsArray, isFolderMode, defaultPackageName) {
+  const enableConvert = document.getElementById('enableConvert').checked;
+  const enableFixAlt = document.getElementById('enableFixAlt').checked;
+  const enableSplit = document.getElementById('enableSplit').checked;
+
+  if (!enableConvert && !enableFixAlt && !enableSplit) {
+    log("❌ 請至少勾選一項要執行的步驟（簡繁字詞轉換／修復 alt 屬性／章節拆分）。");
+    return;
+  }
+
+  let contentConverter = (text) => text;
+  if (enableConvert) {
+    const openccMode = document.getElementById('openccMode').value;
+    const rules = getRules();
+    if (rules.length === 0 && openccMode === 'none') {
+      log("❌ 已勾選「簡繁字詞轉換」，請至少選擇一種 OpenCC 轉換模式，或填寫一組有效的字詞替換規則。");
+      return;
+    }
+    const openccFn = getOpenCCFn(openccMode);
+    if (openccMode !== 'none' && !openccFn) return; // OpenCC 尚未載入
+    contentConverter = buildContentConverter(openccFn, rules);
+  }
+
+  if (itemsArray.length === 0) {
+    log("❌ 未偵測到任何有效的 .epub 或 .txt 檔案。");
+    return;
+  }
+
+  log("==================================================");
+  const stepList = [];
+  if (enableConvert) stepList.push('簡繁字詞轉換');
+  if (enableFixAlt) stepList.push(enableSplit ? '修復 alt 屬性（本次拆分輸出為純文字，此步驟不會有作用）' : '修復圖片 alt 屬性');
+  if (enableSplit) stepList.push('章節拆分');
+  log(`🔧 本次執行步驟：${stepList.join(' → ')}`);
+  log("==================================================");
+
+  // 針對單一檔案的核心處理：
+  // - 有勾選章節拆分：無論是否同時轉換，都回傳 { type: 'chapters', chapters }
+  //   （輸出為純文字 txt，不含 HTML 標籤，因此 fixImgAlt 修復在此分支不會有作用）
+  // - 否則：回傳 { type: 'file', blob }（epub/txt 各自的轉換邏輯，epub 會套用 fixImgAlt）
+  // - 不支援的副檔名：回傳 { type: 'unsupported' }
+  async function processOne(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext !== 'epub' && ext !== 'txt') return { type: 'unsupported' };
+
+    if (enableSplit) {
+      let lines;
+      if (ext === 'epub') {
+        lines = await extractTextFromEpub(file);
+        if (!lines) throw new Error('無法從該 EPUB 提取有效文字');
+      } else {
+        lines = await extractTextFromTxt(file);
+      }
+
+      if (enableConvert) {
+        // 整段文字一次轉換後再切回逐行，確保與「只轉換」模式使用相同的轉換方式
+        const joined = lines.join('');
+        const convertedJoined = contentConverter(joined);
+        const splitBack = convertedJoined.split('\n');
+        if (splitBack.length && splitBack[splitBack.length - 1] === '') splitBack.pop();
+        lines = splitBack.map(l => l + '\n');
+      }
+
+      const chapters = splitIntoChapters(lines);
+      return { type: 'chapters', chapters };
+    }
+
+    // 不拆分：epub/txt 各自完整沿用原本的轉換邏輯；epub 另外視情況修復 img alt 屬性
+    if (ext === 'epub') {
+      return { type: 'file', blob: await processSingleEpub(file, contentConverter, enableFixAlt) };
+    } else {
+      return { type: 'file', blob: await processSingleTxt(file, contentConverter) };
+    }
+  }
+
+  if (isFolderMode) {
+    const zipName = defaultPackageName || "converted";
+    log(`📂 偵測到資料夾結構，共有 ${itemsArray.length} 個檔案。`);
+    log(enableSplit
+      ? `📦 系統將維持原始目錄結構，小說檔案原地替換成「＿章節拆分」子資料夾，其餘檔案維持原樣，打包至：${zipName}.zip`
+      : `📦 系統將維持原始目錄結構與檔名，僅轉換內容，打包至：${zipName}.zip`);
+    log("==================================================");
+
+    const masterZip = new JSZip();
+    let totalChapters = 0;
+
+    for (const item of itemsArray) {
+      log(`🚀 深度處理中: ${item.relPath}`);
+      try {
+        const result = await processOne(item.file);
+        if (result.type === 'unsupported') {
+          // 非 epub/txt 檔案（圖片、字型等），原封不動放回對應目錄
+          masterZip.file(item.relPath, item.file);
+        } else if (result.type === 'file') {
+          // 路徑與檔名完全維持原樣，只有內容被轉換
+          masterZip.file(item.relPath, result.blob);
+          log(`✅ 已排入壓縮包結構: ${item.relPath}`);
+        } else if (result.type === 'chapters') {
+          if (result.chapters.length === 0) {
+            log(`⚠️ 沒有偵測到任何章節內容，跳過: ${item.relPath}`);
+          } else {
+            const dirPart = item.relPath.includes('/') ? item.relPath.slice(0, item.relPath.lastIndexOf('/') + 1) : '';
+            const baseName = item.file.name.replace(/\.[^.]+$/, '');
+            const folderName = `${baseName}_章節拆分`;
+            for (const chap of result.chapters) {
+              masterZip.file(`${dirPart}${folderName}/${chap.fileName}`, chap.content);
+            }
+            totalChapters += result.chapters.length;
+            log(`✅ 拆分完成，共 ${result.chapters.length} 個章節: ${dirPart}${folderName}/`);
+          }
+        }
+      } catch (err) {
+        log(`❌ 處理失敗: ${item.relPath} (${err.message})`);
+      }
+      log("--------------------------------------------------");
+    }
+
+    log("📦 正在封裝壓縮檔，請稍候...");
+    try {
+      const masterBlob = await masterZip.generateAsync({ type: "blob" });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(masterBlob);
+      a.download = `${zipName}.zip`;
+      a.click();
+      const chapterNote = enableSplit ? `（共產生 ${totalChapters} 個章節檔案）` : '';
+      log(`🎉 【全部處理完成】已下載：${zipName}.zip ${chapterNote}`);
+    } catch (err) {
+      log(`❌ 壓縮檔封裝失敗: ${err.message}`);
+    }
+
+  } else {
+    log(`🚀 開始批次處理 ${itemsArray.length} 個獨立檔案...`);
+    log("==================================================");
+
+    for (const item of itemsArray) {
+      log(`🚀 正在處理: ${item.file.name}`);
+      try {
+        const result = await processOne(item.file);
+        if (result.type === 'unsupported') {
+          log(`⚠️ 跳過不支援的檔案類型: ${item.file.name}`);
+          continue;
+        }
+        if (result.type === 'file') {
+          // 檔名完全維持與原檔案相同，只有內容被轉換
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(result.blob);
+          a.download = item.file.name;
+          a.click();
+          log(`🎉 處理完成！已下載: ${item.file.name}`);
+        } else if (result.type === 'chapters') {
+          if (result.chapters.length === 0) {
+            log(`⚠️ 沒有偵測到任何章節內容: ${item.file.name}`);
+            continue;
+          }
+          const baseName = item.file.name.replace(/\.[^.]+$/, '');
+          const perFileZip = new JSZip();
+          for (const chap of result.chapters) perFileZip.file(chap.fileName, chap.content);
+          const blob = await perFileZip.generateAsync({ type: "blob" });
+
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `${baseName}_章節拆分.zip`;
+          a.click();
+          log(`🎉 處理完成！共 ${result.chapters.length} 個章節，已下載: ${baseName}_章節拆分.zip`);
+        }
+      } catch (err) {
+        log(`❌ 處理失敗: ${item.file.name} (${err.message})`);
+      }
+      log("--------------------------------------------------");
+    }
+    log("✅ 所有獨立檔案處理完畢。");
+  }
+
+  log("==================================================");
+}
+
+/* ------------------------------------------------------------------
+ * 暫存已選取的檔案／資料夾，等使用者按下「開始轉換」按鈕才真正執行，
+ * 讓使用者有機會在轉換前先設定好 OpenCC 模式與字詞替換規則。
+ * ------------------------------------------------------------------ */
+let pendingItems = null;
+let pendingIsFolder = false;
+let pendingRootName = "";
+
+function stageItems(itemsArray, isFolderMode, rootName) {
+  const startBtn = document.getElementById('startBtn');
+  const infoEl = document.getElementById('selectedInfo');
+
+  if (itemsArray.length === 0) {
+    infoEl.textContent = "❌ 未偵測到任何有效的 .epub 或 .txt 檔案，請重新選擇。";
+    startBtn.disabled = true;
+    startBtn.textContent = "請先選擇檔案或資料夾";
+    pendingItems = null;
+    return;
+  }
+
+  pendingItems = itemsArray;
+  pendingIsFolder = isFolderMode;
+  pendingRootName = rootName;
+
+  const actionWord = actionWordFromCheckboxes();
+
+  if (isFolderMode) {
+    infoEl.textContent = `✅ 已選擇資料夾「${rootName}」，共 ${itemsArray.length} 個檔案。請設定好選項後按下方按鈕開始${actionWord}。`;
+  } else {
+    infoEl.textContent = `✅ 已選擇 ${itemsArray.length} 個檔案。請設定好選項後按下方按鈕開始${actionWord}。`;
+  }
+
+  startBtn.disabled = false;
+  startBtn.textContent = startBtnLabel();
+  log(isFolderMode
+    ? `📥 已選取資料夾「${rootName}」（${itemsArray.length} 個檔案），等待使用者確認設定後開始${actionWord}。`
+    : `📥 已選取 ${itemsArray.length} 個檔案，等待使用者確認設定後開始${actionWord}。`);
+}
+
+// 依目前勾選的步驟組合，回傳對應的動作詞彙／按鈕文字
+function activeStepLabels() {
+  const labels = [];
+  if (document.getElementById('enableConvert').checked) labels.push('轉換');
+  if (document.getElementById('enableFixAlt').checked) labels.push('修復alt');
+  if (document.getElementById('enableSplit').checked) labels.push('拆分');
+  return labels;
+}
+
+function actionWordFromCheckboxes() {
+  const labels = activeStepLabels();
+  return labels.length ? labels.join('+') : '處理';
+}
+
+function startBtnLabel() {
+  const labels = activeStepLabels();
+  return labels.length ? `🚀 開始${labels.join('+')}並下載` : '🚀 開始處理並下載';
+}
+
+function updateUIStates() {
+  const enableConvert = document.getElementById('enableConvert').checked;
+  const enableFixAlt = document.getElementById('enableFixAlt').checked;
+  const enableSplit = document.getElementById('enableSplit').checked;
+
+  document.getElementById('convertOptions').style.display = enableConvert ? 'block' : 'none';
+  document.getElementById('fixAltNote').style.display = (enableFixAlt && enableSplit) ? 'block' : 'none';
+
+  const startBtn = document.getElementById('startBtn');
+  if (!startBtn.disabled && pendingItems) {
+    startBtn.textContent = startBtnLabel();
+  }
+}
+
+async function startConversion() {
+  if (!pendingItems || pendingItems.length === 0) {
+    log("❌ 尚未選擇任何檔案。");
+    return;
+  }
+  const startBtn = document.getElementById('startBtn');
+  startBtn.disabled = true;
+  startBtn.textContent = "⏳ 處理中...";
+
+  await runPipeline(pendingItems, pendingIsFolder, pendingRootName);
+
+  startBtn.disabled = false;
+  startBtn.textContent = startBtnLabel();
+}
+
+/* ------------------------------------------------------------------
+ * 拖曳與檔案選擇事件（沿用自 epub-simplified-to-traditional-chinese，
+ * 擴充可接受 .txt；選擇後只暫存，不立即轉換）
+ * ------------------------------------------------------------------ */
+const dropZone = document.getElementById('dropZone');
+dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+dropZone.ondragleave = () => { dropZone.classList.remove('dragover'); };
+dropZone.ondrop = async (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+
+  const items = e.dataTransfer.items;
+  if (!items) return;
+
+  const itemsArray = [];
+  let hasFolder = false;
+  let rootName = "converted";
+
+  function isSupported(name) {
+    const lower = name.toLowerCase();
+    return lower.endsWith('.epub') || lower.endsWith('.txt');
+  }
+
+  async function traverseEntry(entry, currentPath, isRootLevel) {
+    if (entry.isFile) {
+      // 資料夾模式下保留所有檔案以維持結構完整（圖片、css 等資源原封不動）；
+      // 若是「拖曳單一/多個檔案（非資料夾）」情境，才需要過濾成只保留支援格式。
+      if (!isRootLevel || isSupported(entry.name)) {
+        const file = await new Promise((res, rej) => entry.file(res, rej));
+        itemsArray.push({ file: file, relPath: currentPath + entry.name });
+      }
+    } else if (entry.isDirectory) {
+      hasFolder = true;
+      const reader = entry.createReader();
+      const readAllEntries = async () => {
+        return new Promise((res) => {
+          let all = [];
+          function read() {
+            reader.readEntries((results) => {
+              if (results.length === 0) { res(all); }
+              else { all = all.concat(results); read(); }
+            });
+          }
+          read();
+        });
+      };
+      const entries = await readAllEntries();
+      for (const child of entries) {
+        await traverseEntry(child, currentPath + entry.name + "/", false);
+      }
+    }
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const entry = items[i].webkitGetAsEntry();
+    if (entry) {
+      if (entry.isDirectory && i === 0) {
+        rootName = entry.name;
+      }
+      // isRootLevel: 直接拖到 dropZone 上、還沒進入任何資料夾的檔案，
+      // 這種情況才需要過濾成只保留 .epub/.txt（避免誤拖到其他雜項檔案）。
+      await traverseEntry(entry, "", true);
+    }
+  }
+
+  stageItems(itemsArray, hasFolder, rootName);
+};
+
+document.getElementById('fileInput').onchange = async (e) => {
+  const files = Array.from(e.target.files).filter(f => {
+    const lower = f.name.toLowerCase();
+    return lower.endsWith('.epub') || lower.endsWith('.txt');
+  });
+  const itemsArray = files.map(f => ({ file: f, relPath: f.name }));
+  stageItems(itemsArray, false, "");
+  e.target.value = "";
+};
+
+document.getElementById('folderInput').onchange = async (e) => {
+  // 資料夾模式保留所有檔案以維持結構完整（僅 epub/txt 會被實際轉換內容）
+  const files = Array.from(e.target.files);
+  if (files.length === 0) {
+    log("❌ 選取的資料夾中找不到任何檔案。");
+    return;
+  }
+
+  let rootName = "converted";
+  if (files[0].webkitRelativePath) {
+    rootName = files[0].webkitRelativePath.split('/')[0];
+  }
+
+  const itemsArray = files.map(f => ({ file: f, relPath: f.webkitRelativePath || f.name }));
+  stageItems(itemsArray, true, rootName);
+  e.target.value = "";
+};
+</script>
+</body>
+</html>
